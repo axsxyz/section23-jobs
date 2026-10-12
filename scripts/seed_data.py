@@ -210,7 +210,6 @@ BNSSA_KEYWORDS = [
     "centre aquatique",
     "complexe aquatique",
     # Sécurité
-    "surveillance aquatique",
     "sécurité aquatique",
     "sauvetage aquatique",
 ]
@@ -343,7 +342,9 @@ async def _upsert_family(session, family_def: dict, keywords: list[str]) -> None
     )
     existing_kws = {row[0] for row in existing_kws_result.all()}
 
-    added = [kw for kw in keywords if kw not in existing_kws]
+    # dict.fromkeys drops repeated keywords (keeping order) so a duplicate in a
+    # list cannot violate uq_family_keyword.
+    added = [kw for kw in dict.fromkeys(keywords) if kw not in existing_kws]
     for kw in added:
         session.add(JobFamilyKeyword(family_id=family.id, keyword=kw))
 
