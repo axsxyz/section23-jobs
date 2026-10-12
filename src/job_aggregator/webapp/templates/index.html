@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Offres — Section23{% endblock %}
+
+{% block content %}
+<section class="filters" id="filters">
+  <div class="filter-top">
+    <div class="seg" id="view-toggle"></div>
+    <div class="filter-count" id="results-meta"></div>
+  </div>
+
+  <div class="pills" id="family-pills">
+    <button class="pill active" data-family="">Toutes</button>
+  </div>
+
+  <div class="filter-row">
+    <div class="filter-group">
+      <label class="filter-label">Région</label>
+      <select id="region-select" class="filter-select">
+        <option value="">Toutes les régions</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">Rayon</label>
+      <div class="radius-wrap">
+        <input type="range" id="radius-slider" class="filter-range" min="5" max="200" step="5" value="50">
+        <span class="radius-val" id="radius-val">50 km</span>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">Contrat</label>
+      <select id="contract-select" class="filter-select">
+        <option value="">Tous</option>
+        <option value="CDI">CDI</option>
+        <option value="CDD">CDD</option>
+        <option value="SAI">Saisonnier</option>
+        <option value="MIS">Intérim</option>
+        <option value="VCA">Vacataire</option>
+        <option value="PRO">Alternance</option>
+        <option value="APP">Apprentissage</option>
+        <option value="STG">Stage</option>
+      </select>
+    </div>
+    <div class="filter-group filter-group--grow">
+      <label class="filter-label">Recherche</label>
+      <input type="text" id="search-input" class="filter-input" placeholder="Mot-clé…">
+    </div>
+    <div class="filter-group filter-group--end">
+      <button id="geo-btn" class="geo-btn" title="Géolocalisation">GPS</button>
+    </div>
+  </div>
+</section>
+
+<section class="offer-list" id="offer-list">
+  <div class="no-results">Chargement…</div>
+</section>
+
+<div class="pag-wrap" id="pag-wrap">
+  <div class="pag-info" id="pag-info"></div>
+  <div class="pag" id="pag"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js?v=2"></script>
+{% endblock %}

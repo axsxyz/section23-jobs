@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#09090b">
+  <title>{% block title %}Section23{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=2">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/" class="topbar-brand">
+        <span class="topbar-logo">23</span>
+        <span class="topbar-brand-name">Section23</span>
+      </a>
+      <nav class="topbar-nav">
+        <a href="/" class="topbar-link{% if request.url.path == '/' %} active{% endif %}">Offres</a>
+        {% if current_user and current_user.is_admin %}
+        <a href="/admin" class="topbar-link{% if request.url.path == '/admin' %} active{% endif %}">Admin</a>
+        {% endif %}
+      </nav>
+      <div class="topbar-right">
+        {% if current_user %}
+        <span class="topbar-user">{{ current_user.username }}</span>
+        {% endif %}
+        <a href="/logout" class="topbar-logout">Sortir</a>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

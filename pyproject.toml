@@ -1,0 +1,42 @@
+[project]
+name = "job-aggregator"
+version = "0.1.0"
+description = "Async job offer aggregator with multi-source ingestion, dedup, LLM scoring, and notifications"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+dependencies = [
+    "httpx>=0.27",
+    "asyncpg>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "pydantic-settings>=2.0",
+    "apscheduler>=4.0.0a5",
+    "feedparser>=6.0",
+    "rapidfuzz>=3.0",
+    "openai>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+    "itsdangerous>=2.1",
+    "python-multipart>=0.0.9",
+    "bcrypt>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"job_aggregator" = [
+    "webapp/static/**/*",
+    "webapp/templates/**/*",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

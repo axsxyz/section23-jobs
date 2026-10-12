@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Admin — Section23{% endblock %}
+
+{% block content %}
+<div class="admin-stack">
+
+  <!-- Families (full width) -->
+  <section class="admin-section">
+    <h2 class="section-title">Familles de métiers</h2>
+    <form id="family-form" class="admin-form">
+      <input type="text" name="slug" placeholder="slug (ex: bnssa)" required class="admin-input">
+      <input type="text" name="display_name" placeholder="Nom affiché" required class="admin-input">
+      <input type="text" name="description" placeholder="Description (optionnel)" class="admin-input">
+      <input type="number" name="sort_order" placeholder="Ordre" value="0" class="admin-input admin-input--sm">
+      <button type="submit" class="btn btn-accent btn-sm">Ajouter</button>
+    </form>
+    <div id="family-list" class="admin-list"></div>
+  </section>
+
+  <!-- Regions + Users side by side -->
+  <div class="admin-row">
+    <section class="admin-section">
+      <h2 class="section-title">Régions</h2>
+      <form id="region-form" class="admin-form">
+        <input type="text" name="slug" placeholder="slug (ex: bretagne-sud)" required class="admin-input">
+        <input type="text" name="display_name" placeholder="Nom affiché" required class="admin-input">
+        <input type="number" name="center_lat" placeholder="Latitude" step="any" required class="admin-input">
+        <input type="number" name="center_lon" placeholder="Longitude" step="any" required class="admin-input">
+        <input type="text" name="department_codes" placeholder='Depts JSON (ex: ["29","56"])' class="admin-input">
+        <button type="submit" class="btn btn-accent btn-sm">Ajouter</button>
+      </form>
+      <div id="region-list" class="admin-list"></div>
+    </section>
+
+    <section class="admin-section">
+      <h2 class="section-title">Utilisateurs</h2>
+      <form id="user-form" class="admin-form">
+        <input type="text" name="username" placeholder="Identifiant" required class="admin-input">
+        <input type="email" name="email" placeholder="Email (optionnel)" class="admin-input">
+        <input type="password" name="password" placeholder="Mot de passe" required class="admin-input">
+        <label class="admin-checkbox">
+          <input type="checkbox" name="is_admin"> Admin
+        </label>
+        <button type="submit" class="btn btn-accent btn-sm">Créer</button>
+      </form>
+      <div id="user-list" class="admin-list"></div>
+    </section>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js?v=2"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() { if (window.Section23) window.Section23.initAdmin(); });
+</script>
+{% endblock %}
