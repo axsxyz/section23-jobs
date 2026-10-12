@@ -12,10 +12,10 @@ from fastapi.templating import Jinja2Templates
 from job_aggregator.db.engine import init_db
 from job_aggregator.db.models import User
 from job_aggregator.webapp.auth import (
-    COOKIE_NAME,
-    MAX_AGE,
-    create_session_cookie,
+    clear_session_cookie,
+    ensure_webapp_secret,
     require_auth_page,
+    set_session_cookie,
     touch_last_login,
     verify_password,
 )
@@ -28,6 +28,7 @@ _HERE = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):  # noqa: ARG001
+    ensure_webapp_secret()
     await init_db()
     logger.info("Database initialized")
     yield
@@ -79,20 +80,14 @@ async def login_submit(
     await touch_last_login(user.id)
 
     response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie(
-        COOKIE_NAME,
-        create_session_cookie(user.id),
-        httponly=True,
-        samesite="lax",
-        max_age=MAX_AGE,
-    )
+    set_session_cookie(response, user.id)
     return response
 
 
 @app.get("/logout")
 async def logout():
     response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    response.delete_cookie(COOKIE_NAME)
+    clear_session_cookie(response)
     return response
 
 

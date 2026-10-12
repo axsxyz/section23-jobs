@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     # Web application
     webapp_secret: str = ""
     webapp_port: int = 8080
+    # Only for local development over plain HTTP: drop the Secure cookie flag.
+    webapp_insecure_cookies: bool = False
 
     # Geocoding (Nominatim)
     nominatim_user_agent: str = ""

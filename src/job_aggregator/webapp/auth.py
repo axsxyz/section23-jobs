@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 import bcrypt as _bcrypt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy import select, update
 
@@ -14,6 +14,25 @@ from job_aggregator.db.models import User
 
 COOKIE_NAME = "s23_session"
 MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
+# The value shipped in .env.example. Anyone can read it, so it must never sign cookies.
+PLACEHOLDER_SECRET = "change-me-to-a-strong-random-string"
+
+
+def ensure_webapp_secret() -> None:
+    """Refuse to run the web app with a missing or publicly known signing key."""
+    secret = settings.webapp_secret.strip()
+    if not secret:
+        raise RuntimeError(
+            "WEBAPP_SECRET is not set. It signs session cookies; set it to a long "
+            "random string (for example: python -c \"import secrets; "
+            "print(secrets.token_urlsafe(48))\")."
+        )
+    if secret == PLACEHOLDER_SECRET:
+        raise RuntimeError(
+            "WEBAPP_SECRET still has the placeholder value from .env.example. "
+            "Replace it with a long random string."
+        )
 
 def hash_password(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
@@ -33,6 +52,25 @@ def _serializer() -> URLSafeTimedSerializer:
 def create_session_cookie(user_id: uuid.UUID) -> str:
     """Sign a session cookie payload containing the user's UUID."""
     return _serializer().dumps(str(user_id))
+
+
+def _cookie_flags() -> dict:
+    return {
+        "httponly": True,
+        "samesite": "lax",
+        "secure": not settings.webapp_insecure_cookies,
+    }
+
+
+def set_session_cookie(response: Response, user_id: uuid.UUID) -> None:
+    """Attach the signed session cookie (Secure unless WEBAPP_INSECURE_COOKIES)."""
+    response.set_cookie(
+        COOKIE_NAME, create_session_cookie(user_id), max_age=MAX_AGE, **_cookie_flags()
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(COOKIE_NAME, **_cookie_flags())
 
 
 def _decode_cookie(token: str) -> str | None:
