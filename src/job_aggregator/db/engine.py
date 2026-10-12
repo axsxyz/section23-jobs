@@ -5,9 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from job_aggregator.config import settings
 
 def _async_url(url: str) -> str:
-    """Ensure the URL uses the asyncpg driver (Railway provides postgresql://)."""
-    if url.startswith("postgresql://") or url.startswith("postgres://"):
-        return url.replace("://", "+asyncpg://", 1)
+    """Ensure the URL uses the asyncpg driver (Railway provides postgresql://).
+
+    ``postgres://`` is mapped too: SQLAlchemy has no "postgres" dialect. URLs that
+    already name a driver (``postgresql+asyncpg://``) are returned unchanged.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix):]
     return url
 
 
