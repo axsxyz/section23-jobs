@@ -131,26 +131,29 @@ class FranceTravailSource(BaseSource):
             expires_at=self._parse_date(item.get("dateEcheance")),
         )
 
-    async def _fetch_pages(self, params: dict) -> list[dict]:
-        """Paginate through all results for a single set of search params."""
+    async def _fetch_pages(self, params: dict) -> tuple[list[dict], bool]:
+        """Paginate through all results for a single set of search params.
+
+        Returns ``(results, hit_cap)``. ``hit_cap`` is true when pagination stopped
+        because the next range start would reach ``API_HARD_CAP`` while pages were
+        still full, i.e. the API probably holds more results than it will return.
+        """
         results: list[dict] = []
         offset = 0
         while True:
             page = await self._search_page(params, offset)
             if not page:
-                break
+                return results, False
             results.extend(page)
             if len(page) < PAGE_SIZE:
-                break
+                return results, False
             offset += PAGE_SIZE
             if offset >= API_HARD_CAP:
-                break
-        return results
+                return results, True
 
     async def _fetch_all(self, params: dict, seen_ids: set[str]) -> list[dict]:
         """Fetch all results for a keyword, sweeping by department if the API cap is hit."""
-        results = await self._fetch_pages(params)
-        capped = len(results) >= API_HARD_CAP + PAGE_SIZE - 1  # reached the ceiling
+        results, capped = await self._fetch_pages(params)
 
         if capped:
             kw = params.get("motsCles", "<no keyword>")
@@ -165,7 +168,8 @@ class FranceTravailSource(BaseSource):
 
             for dept in ALL_DEPARTMENTS:
                 dept_params = {**dept_base, "departement": dept}
-                for item in await self._fetch_pages(dept_params):
+                dept_page, _ = await self._fetch_pages(dept_params)
+                for item in dept_page:
                     oid = item.get("id", "")
                     if oid not in dept_seen and oid not in seen_ids:
                         dept_seen.add(oid)
