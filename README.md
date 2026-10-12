@@ -6,7 +6,7 @@ Async Python aggregator for French job offers: multi-source ingest, dedup, LLM s
 
 French job offers are spread across several channels: the France Travail API (the public employment service), aggregators such as Adzuna, and RSS feeds from smaller boards. Covering them by hand means running the same searches in each one, seeing the same offer more than once, and still reading every result to decide whether it fits.
 
-This service runs that loop on a schedule. It polls each configured source, normalizes offers into one schema, drops duplicates (same URL, or near-identical title and company within 7 days), optionally asks an LLM to score each new offer from 1 to 10 against a free-text target profile, and pushes offers above a threshold to Telegram and/or Discord. A small authenticated web board lets several users browse the same pool by job family (a named group of keywords), region or distance, and mark offers as viewed, saved or dismissed.
+This service runs that loop on a schedule. It polls each configured source, normalizes offers into one schema, drops duplicates (same URL, or near-identical title and company within 7 days), optionally asks an LLM to score each new offer from 1 to 10 against a free-text target profile, and pushes offers scored at or above a threshold to Telegram and/or Discord. A small authenticated web board lets several users browse the same pool by job family (a named group of keywords), region or distance, and mark offers as viewed, saved or dismissed.
 
 [TODO: who it was built for and how it is used day to day]
 
@@ -67,9 +67,9 @@ flowchart LR
   APP <--> DB
 ```
 
-- **Scheduler** (`src/job_aggregator/main.py`, `src/job_aggregator/scheduler/jobs.py`): registers only the sources whose settings are non-empty, then runs APScheduler interval jobs: France Travail every 120 min, RSS every 30, Adzuna every 60, score-and-notify every 5, geocoding every 10, expired-offer cleanup every 24 h. Each enabled source is also fetched once at boot.
+- **Scheduler** (`src/job_aggregator/main.py`, `src/job_aggregator/scheduler/jobs.py`): registers only the sources whose settings are non-empty, then runs APScheduler interval jobs: France Travail every 120 min, RSS every 30, Adzuna every 60, score-and-notify every 5, geocoding every 10, expired-offer cleanup every 24 h (currently a no-op, see Status and limitations). Each interval schedule first fires at startup (APScheduler 4 `IntervalTrigger` default, checked against 4.0.0a6), and `main.py:102-107` queues one more fetch per enabled source, so each source is fetched twice at boot.
 - **Source adapters** (`src/job_aggregator/sources/`): every adapter returns a normalized `RawOffer` (`base.py`). `france_travail.py` does OAuth2 client-credentials with token refresh 30 s before expiry and one retry on 401, paginates in 150-offer ranges, and sends one query per keyword. `adzuna.py` reads up to 3 pages of 50. `rss.py` parses feeds with feedparser and strips HTML from summaries.
-- **Keyword pre-filter** (`src/job_aggregator/filters/keywords.py`): case-insensitive substring checks on sector keywords (title + description), location and contract type. An offer with no location or contract data passes.
+- **Keyword pre-filter** (`src/job_aggregator/filters/keywords.py`): case-insensitive substring checks on sector keywords (title + description) and location, and a case-insensitive exact match on contract type. An offer with no location or contract data passes.
 - **Dedup + insert** (`src/job_aggregator/filters/dedup.py`, `src/job_aggregator/db/repository.py`): fuzzy check on title + company against the last 7 days (rapidfuzz `token_sort_ratio` >= 85), then an insert keyed on the SHA-256 of the URL with `ON CONFLICT DO NOTHING`.
 - **LLM scorer** (`src/job_aggregator/filters/scorer.py`): sends the target profile and the offer (description truncated to 2,000 characters) to an OpenAI chat model, expects a JSON object `{"score", "reason"}`, and clamps the score to 1-10.
 - **Notifiers** (`src/job_aggregator/notifier/`): Telegram (MarkdownV2 message) and Discord (embed colored by score), up to 3 attempts per channel. The final outcome per channel (success, or the error) is written to `notification_log`.
@@ -80,23 +80,26 @@ flowchart LR
 
 ## Technical choices and trade-offs
 
-1. **In-process scheduler instead of a queue and workers.** Fetching, scoring, notifying, geocoding and cleanup are independent interval jobs inside one asyncio process (`main.py:51-98`), so the aggregator is a single container. Cost: it depends on a pre-release (`apscheduler>=4.0.0a5`, `pyproject.toml:11`); the scheduler is created with no data store (`main.py:51`), so schedules are rebuilt on every start; each source is also fetched once at boot (`main.py:102-107`); nothing coordinates two aggregator replicas.
+1. **In-process scheduler instead of a queue and workers.** Fetching (one schedule per source), score-and-notify, geocoding and cleanup are separate interval jobs inside one asyncio process (`main.py:51-98`), so the aggregator is a single container. Cost: it depends on a pre-release (`apscheduler>=4.0.0a5`, `pyproject.toml:12`); the scheduler is created with no data store (`main.py:51`), so schedules are rebuilt on every start; each source is fetched twice at boot, once by its schedule's first fire and once by the extra job queued in `main.py:102-107`; nothing coordinates two aggregator replicas.
 2. **Fuzzy dedup first, exact URL hash second.** The same offer reposted on another source has a different URL, so title + company similarity over a 7-day window catches it (`repository.py:49-65`); the unique `url_hash` plus `ON CONFLICT DO NOTHING` makes re-fetching idempotent (`repository.py:21-46`, `models.py:33`). Cost: the fuzzy check runs first and loads every offer from the last 7 days into Python for each incoming offer, so a poll does O(new x window) comparisons. Location is not part of the key, so one employer posting the same title in several cities is kept once.
 3. **Scoring decoupled from ingestion.** Ingestion needs no LLM key and stays fast; a separate job scores the 20 oldest unscored offers every 5 minutes at temperature 0.1 with a 100-token cap (`jobs.py:89-109`, `scorer.py:44-57`). Cost: with defaults, throughput is capped at 240 offers per hour. Any scoring failure stores `(5, "scoring_error")` (`scorer.py:71-73`), which is below the default threshold of 7 and is never retried, so an API outage quietly removes those offers from alerts. Notifications only consider scored offers (`repository.py:79-92`), so no OpenAI key means no alerts.
-4. **One France Travail query per keyword.** Space-separated terms in `motsCles` are combined with AND (`france_travail.py:183-184`), so OR semantics take one query per keyword, merged by offer id (`france_travail.py:191-205`). Cost: each poll makes N keyword queries of up to 7 pages each, and each query is subject to the 1,050-result ceiling described below; a query that hits it costs another 99 département queries.
+4. **One France Travail query per keyword.** Space-separated terms in `motsCles` are combined with AND (`france_travail.py:187-188`), so OR semantics take one query per keyword, merged by offer id (`france_travail.py:195-209`). Cost: each poll makes N keyword queries of up to 7 pages each, and each query is subject to the 1,050-result ceiling described below; a query that hits it costs another 99 département queries.
 5. **Region filter in plain PostgreSQL, no PostGIS.** SQL keeps offers whose département is in the region's list or whose coordinates fall inside a bounding box (radius / 111 km per degree, longitude scaled by cos(latitude)); exact haversine distance is computed in Python on the returned page (`routers/offers.py:79-101`, `167-178`). Cost: the post-filter runs per page, so `total` is only corrected for the current page and pages can come back short; `sort=distance` reorders only within a page (`routers/offers.py:144-149`, `198-199`).
-6. **Schema from `create_all` at startup, no migrations.** Both processes call `init_db()` on boot (`db/engine.py:19-23`, `main.py:31`, `webapp/app.py:29-33`), so a fresh database needs no setup step. Cost: `create_all` only creates missing tables; changing a column on an existing deployment needs hand-written SQL, and there is no migration history.
+6. **Schema from `create_all` at startup, no migrations.** Both processes call `init_db()` on boot (`db/engine.py:24-28`, `main.py:31`, `webapp/app.py:29-33`), so a fresh database needs no setup step. Cost: `create_all` only creates missing tables; changing a column on an existing deployment needs hand-written SQL, and there is no migration history.
 
 ## What broke and how I fixed it
 
+The first three problems below, and the first version of the France Travail fix, were fixed in the private history before this repository's first commit, so this repository only shows the fixed state. Later fixes have their own commits.
+
 **Railway's database URL did not match the async driver.**
-Symptom: on Railway the service receives `DATABASE_URL` as `postgresql://...` (or `postgres://`), and the async engine cannot start with it. Cause: `create_async_engine` needs the async driver named in the URL. SQLAlchemy does not recognize the `postgres://` scheme at all, and `postgresql://` selects the synchronous psycopg2 driver, which is not a dependency of this project. Fix: `_async_url()` in `src/job_aggregator/db/engine.py` rewrites both prefixes to `postgresql+asyncpg://` before the engine is created, so the same code accepts the explicit URL from `docker-compose`/`.env` and the one Railway injects.
+Symptom: on Railway the service receives `DATABASE_URL` as `postgresql://...`, and the async engine cannot start with it. Cause: `create_async_engine` needs the async driver named in the URL, and `postgresql://` selects SQLAlchemy's default synchronous PostgreSQL driver, which is not a dependency of this project. Fix: `_async_url()` in `src/job_aggregator/db/engine.py` rewrites the prefix to `postgresql+asyncpg://` before the engine is created, so the same code accepts the explicit URL from `docker-compose`/`.env` and the one Railway injects.
+The first version also turned `postgres://` into `postgres+asyncpg://`, which SQLAlchemy rejects because it has no `postgres` dialect. Fix (d296f6c): both `postgresql://` and `postgres://` now become `postgresql+asyncpg://`, and URLs that already name a driver are left unchanged. `tests/test_engine_url.py` covers both prefixes and an already-async URL; the `postgres://` case failed before the fix.
 
 **The web process had no Railway start command bound to `$PORT`.**
-Symptom: the only start commands were the Dockerfile's, which runs the aggregator (no HTTP server), and docker-compose's, which starts uvicorn on a fixed port 8080. Cause: Railway routes traffic to the port it passes in `$PORT`. Fix: a `Procfile` with two process types, `web` (uvicorn on `--port $PORT`) and `aggregator` (`python -m job_aggregator.main`).
+Symptom: the only start commands were the Dockerfile's, which runs the aggregator (no HTTP server), and docker-compose's, which starts uvicorn on a fixed port 8080. Cause: Railway passes the port to bind in `$PORT` [TODO: link Railway docs]. Fix: a `Procfile` with two process types, `web` (uvicorn on `--port $PORT`) and `aggregator` (`python -m job_aggregator.main`).
 
 **Templates and static files were missing from the installed package.**
-Symptom: the web app works from a source checkout, but the Docker image installs the package with `pip install .`, which only ships Python modules by default. Cause: `webapp/app.py` resolves `static/` and `templates/` relative to the installed module (`_HERE`), and those directories were not declared as package data. Fix: `[tool.setuptools.package-data]` in `pyproject.toml` includes `webapp/static/**/*` and `webapp/templates/**/*`.
+Symptom: the web app works from a source checkout but not from the Docker image, which installs the package with `pip install .`. Cause: `webapp/app.py` resolves `static/` and `templates/` relative to the installed module (`_HERE`), and those directories were not declared as package data, so they were not installed. Fix: `[tool.setuptools.package-data]` in `pyproject.toml` includes `webapp/static/**/*` and `webapp/templates/**/*`.
 
 **France Travail stops at 1,050 results per query.**
 Symptom: a broad keyword search returns at most 1,050 offers; `_fetch_pages` stops paginating once the next range start reaches `API_HARD_CAP` = 1000 (`src/job_aggregator/sources/france_travail.py`). Fix, part 1: every query asks for `sort=1`, commented as newest first, so the window each poll sees is the most recent offers, and the database accumulates coverage across polls through dedup. Fix, part 2: `FranceTravailSource._fetch_all` re-runs a capped query once per département (`ALL_DEPARTMENTS`, without the `commune` filter, which the comment marks as incompatible with `departement`) and merges the results by offer id.
@@ -164,7 +167,7 @@ All settings are read by `pydantic-settings` from the environment or a `.env` fi
 
 | Name | Required? | Meaning |
 |---|---|---|
-| `DATABASE_URL` | Yes (default targets `localhost:5432/jobbot`) | SQLAlchemy URL. `postgresql://` and `postgres://` are rewritten to `postgresql+asyncpg://`. |
+| `DATABASE_URL` | Yes (default targets `localhost:5432/jobbot`) | SQLAlchemy URL. `postgresql://` and `postgres://` are rewritten to `postgresql+asyncpg://`; URLs that already name a driver are used as is. |
 | `WEBAPP_SECRET` | Yes for the web app | Key that signs session cookies. The web app refuses to start if it is empty or the `.env.example` placeholder. |
 | `WEBAPP_INSECURE_COOKIES` | Optional, default `false` | `true` drops the `Secure` flag on the session cookie. Only for local development over plain HTTP. |
 | `FRANCE_TRAVAIL_CLIENT_ID`, `FRANCE_TRAVAIL_CLIENT_SECRET` | Optional, both to enable | France Travail OAuth2 client credentials. |
@@ -199,7 +202,7 @@ The app was deployed on Railway. What the repository records:
 - `Dockerfile` builds from `python:3.12-slim`, installs the package with `pip install .`, and its default command runs the aggregator.
 - `db/engine.py` accepts the `postgresql://` URL Railway provides (see above), and `pyproject.toml` ships templates and static files inside the package.
 - Both processes create missing tables on start, so a fresh Railway Postgres needs no migration step; the first admin still has to be created with `scripts/create_admin.py` against that database.
-- The `web` service needs `WEBAPP_SECRET` set to a real value, or it exits at startup. Railway serves over HTTPS, so leave `WEBAPP_INSECURE_COOKIES` unset there.
+- The `web` service needs `WEBAPP_SECRET` set to a real value, or it exits at startup. Leave `WEBAPP_INSECURE_COOKIES` unset on any deployment served over HTTPS.
 
 Which builder and start command each Railway service used is not in the repository. [TODO: document the Railway services (builder, start command, variables)]
 
@@ -212,23 +215,25 @@ pip install -e '.[dev]'
 python -m pytest
 ```
 
-15 tests, all offline: no database, no network. External APIs are replaced by fakes (a fake France Travail search function, a fake SQLAlchemy session, FastAPI's `TestClient` with `init_db` stubbed).
+18 tests, all offline: no database, no network. External APIs are replaced by fakes (a fake France Travail search function, a fake SQLAlchemy session, FastAPI's `TestClient` with `init_db` stubbed).
 
 - `tests/test_france_travail.py`: pagination and the département sweep.
 - `tests/test_seed_data.py`: seed keyword lists and the keyword upsert.
 - `tests/test_webapp_security.py`: startup secret check and session cookie flags.
 - `tests/test_create_admin.py`: password prompt and argv fallback.
+- `tests/test_engine_url.py`: `DATABASE_URL` rewriting to the asyncpg driver.
 
-They cover the fixes listed above, not the whole pipeline. There is no CI. [TODO: tests for the other pure functions: `filters/keywords.py`, `db/engine.py::_async_url`, `webapp/geo.py::haversine_km`, `webapp/routers/offers.py::_kw_regex`, `notifier/telegram.py::_escape_md`, the scorer's JSON parsing; and an integration test against a real Postgres]
+They cover the code fixes listed above, including the database URL rewrite, not the whole pipeline. There is no CI. [TODO: tests for the other pure functions: `filters/keywords.py`, `webapp/geo.py::haversine_km`, `webapp/routers/offers.py::_kw_regex`, `notifier/telegram.py::_escape_md`, the scorer's JSON parsing; and an integration test against a real Postgres]
 
 ## Status and limitations
 
 - The deployment is currently offline. [TODO: live URL once redeployed]
-- Tests cover the fixed code paths only; no CI, no schema migrations.
+- Tests cover the fixed code paths only (including the database URL rewrite); no CI, no schema migrations.
+- Known bug: offer expiry is never stored. `ingest_offer` sets `expires_at` on the offer (`filters/dedup.py:41`), but `insert_if_new` builds its own insert without that column (`db/repository.py:25-41`). The column stays NULL, so the 24 h cleanup (`scheduler/jobs.py:60-78`) deletes nothing and the offers API always returns `expires_at: null`. [TODO: persist `expires_at` in `insert_if_new`]
 - France Travail: the département sweep list has 99 codes and no Corsica (`2A`/`2B`). The sweep has only been exercised against a fake API.
-- An offer's département is the first two characters of its postal code (`sources/france_travail.py:124`), so Corsican offers get `20` and overseas offers `97`; neither matches the seeded region codes `2A`, `2B` or `971`-`976`, so they only match those regions by coordinates.
+- A France Travail offer's département is the first two characters of its postal code (`sources/france_travail.py:124`), so Corsican offers get `20` and overseas offers `97`; neither matches the seeded region codes `2A`, `2B`, `971`-`974` or `976`, so they only match those regions by coordinates. Adzuna and RSS offers have no département and match regions by coordinates only.
 - Scoring throughput is 20 offers per 5 minutes with defaults; failed scorings are stored as 5 and not retried.
-- An offer is marked as notified even when every channel failed; failures are only visible in `notification_log`. Notifier retries have no backoff.
+- An offer is marked as notified even when every channel failed; failures are recorded only in `notification_log` and the aggregator log. Notifier retries have no backoff.
 - With a region filter, the total count and page sizes are approximate, and distance sorting applies within a page only.
 - `TARGET_SENIORITY` is parsed but unused; `WEBAPP_PORT` is declared but unused.
 - Not verified: on a first boot the aggregator and the web app both run `create_all` at the same time; concurrent `CREATE TABLE` in Postgres can fail one of them, and `restart: unless-stopped` would retry it.
