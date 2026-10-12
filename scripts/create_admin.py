@@ -2,7 +2,10 @@
 
 Usage:
     cd /path/to/section23-jobs
-    python scripts/create_admin.py <username> <password>
+    python scripts/create_admin.py <username>
+
+The password is read from the terminal without echo (asked twice). Passing it
+as a second argument still works but leaves it in your shell history.
 
 The script creates an admin user in the database. Run it once after a fresh
 deployment before anyone can log in to the webapp.
@@ -11,6 +14,7 @@ deployment before anyone can log in to the webapp.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import sys
 from pathlib import Path
 
@@ -50,8 +54,27 @@ async def create_admin(username: str, password: str) -> None:
     print("   You can now log in at http://localhost:8080/login")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python scripts/create_admin.py <username> <password>")
+def main(argv: list[str]) -> None:
+    if len(argv) not in (2, 3):
+        print("Usage: python scripts/create_admin.py <username> [password]")
         sys.exit(1)
-    asyncio.run(create_admin(sys.argv[1], sys.argv[2]))
+
+    username = argv[1]
+    if len(argv) == 3:
+        print(
+            "Warning: a password given on the command line ends up in your shell "
+            "history. Omit it to be prompted instead.",
+            file=sys.stderr,
+        )
+        password = argv[2]
+    else:
+        password = getpass.getpass("Password: ")
+        if getpass.getpass("Confirm password: ") != password:
+            print("✗  Passwords do not match.")
+            sys.exit(1)
+
+    asyncio.run(create_admin(username, password))
+
+
+if __name__ == "__main__":
+    main(sys.argv)
