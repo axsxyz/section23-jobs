@@ -94,14 +94,14 @@ Symptom: on Railway the service receives `DATABASE_URL` as `postgresql://...`, a
 The first version also turned `postgres://` into `postgres+asyncpg://`, which SQLAlchemy rejects because it has no `postgres` dialect. Fix (d296f6c): both `postgresql://` and `postgres://` now become `postgresql+asyncpg://`, and URLs that already name a driver are left unchanged. `tests/test_engine_url.py` covers both prefixes and an already-async URL; the `postgres://` case failed before the fix.
 
 **The web process had no Railway start command bound to `$PORT`.**
-Symptom: the only start commands were the Dockerfile's, which runs the aggregator (no HTTP server), and docker-compose's, which starts uvicorn on a fixed port 8080. Cause: Railway passes the port to bind in `$PORT` [TODO: link Railway docs]. Fix: a `Procfile` with two process types, `web` (uvicorn on `--port $PORT`) and `aggregator` (`python -m job_aggregator.main`).
+Symptom: the only start commands were the Dockerfile's, which runs the aggregator (no HTTP server), and docker-compose's, which starts uvicorn on a fixed port 8080. Cause: Railway passes the port to bind in `$PORT`. Fix: a `Procfile` with two process types, `web` (uvicorn on `--port $PORT`) and `aggregator` (`python -m job_aggregator.main`).
 
 **Templates and static files were missing from the installed package.**
 Symptom: the web app works from a source checkout but not from the Docker image, which installs the package with `pip install .`. Cause: `webapp/app.py` resolves `static/` and `templates/` relative to the installed module (`_HERE`), and those directories were not declared as package data, so they were not installed. Fix: `[tool.setuptools.package-data]` in `pyproject.toml` includes `webapp/static/**/*` and `webapp/templates/**/*`.
 
 **France Travail stops at 1,050 results per query.**
 Symptom: a broad keyword search returns at most 1,050 offers; `_fetch_pages` stops paginating once the next range start reaches `API_HARD_CAP` = 1000 (`src/job_aggregator/sources/france_travail.py`). Fix, part 1: every query asks for `sort=1`, commented as newest first, so the window each poll sees is the most recent offers, and the database accumulates coverage across polls through dedup. Fix, part 2: `FranceTravailSource._fetch_all` re-runs a capped query once per département (`ALL_DEPARTMENTS`, without the `commune` filter, which the comment marks as incompatible with `departement`) and merges the results by offer id.
-That second part never ran. `_fetch_all` decided a query was capped when it had at least `API_HARD_CAP + PAGE_SIZE - 1` = 1,149 results, but `_fetch_pages` returns at most 7 x 150 = 1,050, so the condition was always false. I found it by reading the code while preparing this repository, not from a production symptom. Fix (56dd589): `_fetch_pages` now returns `(results, hit_cap)`, where `hit_cap` is true only when it stopped at the cap after a full page, and `_fetch_all` branches on that flag. `tests/test_france_travail.py` drives the source with a fake search function: with endless full pages it now queries all 99 départements (it made zero département calls before the fix), and a short or empty last page triggers no sweep. [TODO: confirm the maximum range start in the current France Travail API documentation; the code assumes 1000]
+That second part never ran. `_fetch_all` decided a query was capped when it had at least `API_HARD_CAP + PAGE_SIZE - 1` = 1,149 results, but `_fetch_pages` returns at most 7 x 150 = 1,050, so the condition was always false. I found it by reading the code while preparing this repository, not from a production symptom. Fix (56dd589): `_fetch_pages` now returns `(results, hit_cap)`, where `hit_cap` is true only when it stopped at the cap after a full page, and `_fetch_all` branches on that flag. `tests/test_france_travail.py` drives the source with a fake search function: with endless full pages it now queries all 99 départements (it made zero département calls before the fix), and a short or empty last page triggers no sweep. The code assumes a maximum range start of 1000.
 
 ### Found while preparing the public release
 
@@ -143,7 +143,7 @@ docker compose up --build     # postgres + aggregator (app) + web
 
 Open <http://localhost:8080/login> and sign in with the admin account. `docker compose up app` or `docker compose up web` starts only the aggregator or only the web process (plus Postgres). If `WEBAPP_SECRET` is empty or still the placeholder, the `web` container exits at startup with an error naming the variable, and compose keeps restarting it until you fix `.env`; that is intended.
 
-The compose flow above was not re-run for this release (no Docker in the environment where the fixes were made); the tests below cover the changed code paths. [TODO: re-run the compose flow end to end and remove this note]
+The compose flow above was not re-run for this release (no Docker in the environment where the fixes were made); the tests below cover the changed code paths.
 
 What runs with which keys:
 
@@ -157,7 +157,7 @@ What runs with which keys:
 | `OPENAI_API_KEY` | LLM scoring. **Without it nothing is ever notified**: only scored offers are considered for alerts. |
 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, and/or `DISCORD_WEBHOOK_URL` | Notification channels for offers scored at or above `SCORING_THRESHOLD`. Need `OPENAI_API_KEY` to do anything. |
 
-There is no demo data set of offers: with no source configured, the board is empty. [TODO: add a demo-offers seed so the board can be tried without any key]
+There is no demo data set of offers: with no source configured, the board is empty.
 
 ## Configuration
 
@@ -202,9 +202,9 @@ The app was deployed on Railway. What the repository records:
 - Both processes create missing tables on start, so a fresh Railway Postgres needs no migration step; the first admin still has to be created with `scripts/create_admin.py` against that database.
 - The `web` service needs `WEBAPP_SECRET` set to a real value, or it exits at startup. Leave `WEBAPP_INSECURE_COOKIES` unset on any deployment served over HTTPS.
 
-Which builder and start command each Railway service used is not in the repository. [TODO: document the Railway services (builder, start command, variables)]
+Which builder and start command each Railway service used is not in the repository yet.
 
-Live: [TODO: live URL once redeployed]
+Live: offline for now.
 
 ## Tests
 
@@ -221,13 +221,13 @@ python -m pytest
 - `tests/test_create_admin.py`: password prompt and argv fallback.
 - `tests/test_engine_url.py`: `DATABASE_URL` rewriting to the asyncpg driver.
 
-They cover the code fixes listed above, including the database URL rewrite, not the whole pipeline. There is no CI. [TODO: tests for the other pure functions: `filters/keywords.py`, `webapp/geo.py::haversine_km`, `webapp/routers/offers.py::_kw_regex`, `notifier/telegram.py::_escape_md`, the scorer's JSON parsing; and an integration test against a real Postgres]
+They cover the code fixes listed above, including the database URL rewrite, not the whole pipeline. There is no CI.
 
 ## Status and limitations
 
-- The deployment is currently offline. [TODO: live URL once redeployed]
+- The deployment is currently offline.
 - Tests cover the fixed code paths only (including the database URL rewrite); no CI, no schema migrations.
-- Known bug: offer expiry is never stored. `ingest_offer` sets `expires_at` on the offer (`filters/dedup.py:41`), but `insert_if_new` builds its own insert without that column (`db/repository.py:25-41`). The column stays NULL, so the 24 h cleanup (`scheduler/jobs.py:60-78`) deletes nothing and the offers API always returns `expires_at: null`. [TODO: persist `expires_at` in `insert_if_new`]
+- Known bug: offer expiry is never stored. `ingest_offer` sets `expires_at` on the offer (`filters/dedup.py:41`), but `insert_if_new` builds its own insert without that column (`db/repository.py:25-41`). The column stays NULL, so the 24 h cleanup (`scheduler/jobs.py:60-78`) deletes nothing and the offers API always returns `expires_at: null`.
 - France Travail: the département sweep list has 99 codes and no Corsica (`2A`/`2B`). The sweep has only been exercised against a fake API.
 - A France Travail offer's département is the first two characters of its postal code (`sources/france_travail.py:124`), so Corsican offers get `20` and overseas offers `97`; neither matches the seeded region codes `2A`, `2B`, `971`-`974` or `976`, so they only match those regions by coordinates. Adzuna and RSS offers have no département and match regions by coordinates only.
 - Scoring throughput is 20 offers per 5 minutes with defaults; failed scorings are stored as 5 and not retried.
@@ -237,7 +237,21 @@ They cover the code fixes listed above, including the database URL rewrite, not 
 - Not verified: on a first boot the aggregator and the web app both run `create_all` at the same time; concurrent `CREATE TABLE` in Postgres can fail one of them, and `restart: unless-stopped` would retry it.
 - No login rate limiting and no CSRF token (the cookie is `SameSite=Lax`).
 - The web UI is French only.
-- [TODO: number of sources live, offers ingested per day, scoring precision, uptime, running cost]
+- Live figures (sources live, offers ingested per day, scoring precision, uptime, running cost) are not published yet.
+
+## Open items
+
+Tracked here until they are done:
+
+- [ ] Fix the expiry bug: persist `expires_at` in `insert_if_new` (see Status and limitations).
+- [ ] Redeploy on Railway and publish the live URL.
+- [ ] Document the Railway services: builder, start command and variables.
+- [ ] Re-run the docker-compose flow end to end for this release.
+- [ ] Add a demo-offers seed so the board can be tried without any API key.
+- [ ] Tests for the remaining pure functions (`filters/keywords.py`, `webapp/geo.py::haversine_km`, `webapp/routers/offers.py::_kw_regex`, `notifier/telegram.py::_escape_md`, the scorer's JSON parsing) and an integration test against a real Postgres.
+- [ ] Confirm the maximum range start in the current France Travail API documentation (the code assumes 1000).
+- [ ] Publish live figures: sources live, offers ingested per day, scoring precision, uptime, running cost.
+- [ ] Link Railway's documentation for the `$PORT` variable.
 
 ## License
 
