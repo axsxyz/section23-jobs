@@ -8,8 +8,6 @@ French job offers are spread across several channels: the France Travail API (th
 
 This service runs that loop on a schedule. It polls each configured source, normalizes offers into one schema, drops duplicates (same URL, or near-identical title and company within 7 days), optionally asks an LLM to score each new offer from 1 to 10 against a free-text target profile, and pushes offers scored at or above a threshold to Telegram and/or Discord. A small authenticated web board lets several users browse the same pool by job family (a named group of keywords), region or distance, and mark offers as viewed, saved or dismissed.
 
-[TODO: who it was built for and how it is used day to day]
-
 ## Architecture
 
 Two processes share one PostgreSQL database and nothing else: the aggregator (scheduler, sources, scoring, notifications, geocoding) and the web app (FastAPI + Jinja2).
